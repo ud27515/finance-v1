@@ -46,3 +46,11 @@ GitHub Pagesで公開できる、完全静的な家計シミュレーターで�
 `household.father / mother / son` の `age`, `attribute`, `annual_gross_income`, `annual_net_income`, `retirement_age` を差分更新できます。
 金額は円（例: 10000000）でも万円（例: 1000）でも取り込めます。未指定項目は上書きしません。
 `events` から教育、親の介護、医療、住宅、車、家族支援、旅行、退職等のイベント追加にも対応します。
+
+
+## v2026.09.05-4
+- `app_update.household.father/mother/son` の差分取込に対応
+- ChatGPT回答全文から最初の完全なJSONオブジェクトを自動抽出
+- コードブロック・前後説明・一部の全角記号/スマートクォートを許容
+- 取込エラー時に原因メッセージを表示
+- GitHub Pages更新時の古いService Workerキャッシュ対策を強化

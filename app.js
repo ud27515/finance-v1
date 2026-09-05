@@ -662,13 +662,44 @@
     return null;
   }
 
+  function extractJsonObject(text){
+    // ChatGPTからコードブロック・前後説明付きで貼られても、最初の完全なJSONオブジェクトだけを取り出す。
+    let cleaned=String(text??'')
+      .replace(/^\uFEFF/,'')
+      .replace(/[“”]/g,'"')
+      .replace(/[‘’]/g,"'")
+      .replace(/：/g,':')
+      .replace(/，/g,',')
+      .replace(/｛/g,'{')
+      .replace(/｝/g,'}')
+      .trim();
+    cleaned=cleaned.replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
+
+    const start=cleaned.indexOf('{');
+    if(start<0) throw new Error('JSONの開始 { が見つかりません');
+    let depth=0,inString=false,escape=false;
+    for(let i=start;i<cleaned.length;i++){
+      const ch=cleaned[i];
+      if(inString){
+        if(escape){escape=false;continue;}
+        if(ch==='\\'){escape=true;continue;}
+        if(ch==='"')inString=false;
+        continue;
+      }
+      if(ch==='"'){inString=true;continue;}
+      if(ch==='{')depth++;
+      if(ch==='}')depth--;
+      if(depth===0) return cleaned.slice(start,i+1);
+    }
+    throw new Error('JSONの閉じ } が見つかりません');
+  }
+
   function applyImport(){
     const text=$('importText').value.trim();const msg=$('importMessage');msg.textContent='';
     if(!text){msg.textContent='貼り付けるデータがありません。';return;}
     try{
-      let cleaned=text.replace(/^```(?:json)?\s*/i,'').replace(/```$/,'').trim();
-      const first=cleaned.indexOf('{'),last=cleaned.lastIndexOf('}');if(first>=0&&last>first)cleaned=cleaned.slice(first,last+1);
-      const obj=JSON.parse(cleaned);const norm=normalizeImported(obj);if(!norm)throw new Error('unknown');
+      const cleaned=extractJsonObject(text);
+      const obj=JSON.parse(cleaned);const norm=normalizeImported(obj);if(!norm)throw new Error('対応していないJSON形式です');
       if(norm.type==='app_update'){
         const changed=applyAppUpdate(norm.data);
         if(!changed) throw new Error('empty update');
@@ -692,7 +723,8 @@
       }
     }catch(err){
       console.warn('Import failed',err);
-      msg.textContent='JSONを読み取れませんでした。type: "app_update" またはシミュレーター用JSONをそのまま貼ってください。';
+      const detail=err && err.message ? `（${err.message}）` : '';
+      msg.textContent=`JSONを読み取れませんでした${detail}。ChatGPTの回答全体を貼っても構いません。アプリがJSON部分を自動抽出します。`;
     }
   }
 
@@ -721,7 +753,9 @@
     state.events=(state.events||[]).map(normalizeEvent);
     syncLegacyMonthlyIncome(); saveState();
     bindTabs();populateInputs();bindInputs();bindActions();renderAll();
-    if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')) {
+      navigator.serviceWorker.register('./sw.js?v=20260905-4').then(reg=>reg.update()).catch(()=>{});
+    }
   }
 
   init();

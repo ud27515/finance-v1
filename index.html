@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f172a" />
   <title>家計シミュレーター</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20260905-4" />
 </head>
 <body>
   <header class="topbar">
@@ -263,7 +263,8 @@
       <div class="section-head inline">
         <div>
           <h2>ChatGPTから貼り付け</h2>
-          <p>どのシミュレーター用データでも、ここが共通の貼り付け先です。</p>
+          <p>ChatGPTの回答全体でもJSONだけでも貼れます。JSON部分は自動抽出します。</p>
+          <p class="footnote">取込仕様 v2026.09.05-4</p>
         </div>
         <button value="cancel" class="icon-btn" aria-label="閉じる">×</button>
       </div>
@@ -279,8 +280,9 @@
   <footer>
     <div>データはこのブラウザの端末内に保存されます。</div>
     <div>重要な判断は、金融機関・税理士・FP等の専門家にも確認してください。</div>
+    <div class="footnote">アプリ v2026.09.05-4</div>
   </footer>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260905-4"></script>
 </body>
 </html>
