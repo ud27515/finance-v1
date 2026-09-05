@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>家計シミュレーター</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">MY FAMILY FINANCE</div>
+      <h1>家計シミュレーター</h1>
+    </div>
+    <div class="top-actions">
+      <button id="openImportBtn" class="btn primary">ChatGPTから貼り付け</button>
+      <button id="exportBtn" class="btn">バックアップ</button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="メインナビゲーション">
+    <button class="tab active" data-page="home">ホーム</button>
+    <button class="tab" data-page="profile">我が家データ</button>
+    <button class="tab" data-page="mortgage">ローン vs 運用</button>
+    <button class="tab" data-page="allocation">資産の持ち方</button>
+    <button class="tab" data-page="history">履歴</button>
+  </nav>
+  <div id="globalToast" class="global-toast" role="status" aria-live="polite"></div>
+
+  <main>
+    <section id="page-home" class="page active">
+      <div class="hero-grid">
+        <div class="hero-card">
+          <div class="label">純金融資産</div>
+          <div id="homeNetFinancial" class="hero-value">—</div>
+          <div class="sub">現預金 + 投資資産 − 金融負債</div>
+        </div>
+        <div class="hero-card">
+          <div class="label">手元現金</div>
+          <div id="homeCash" class="hero-value">—</div>
+          <div id="homeCashMonths" class="sub">—</div>
+        </div>
+        <div class="hero-card">
+          <div class="label">住宅ローン残高</div>
+          <div id="homeMortgage" class="hero-value">—</div>
+          <div id="homeMortgageRate" class="sub">—</div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>今の資産構成</h2>
+              <p>入力データから自動集計</p>
+            </div>
+          </div>
+          <div id="assetBars" class="bars"></div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>今後5年の現金需要</h2>
+              <p>将来イベント + 生活防衛資金</p>
+            </div>
+          </div>
+          <div id="cashNeedSummary" class="summary-stack"></div>
+        </section>
+      </div>
+
+      <section class="card accent-card">
+        <div class="section-head inline">
+          <div>
+            <h2>ChatGPTに相談</h2>
+            <p>現在の家計データを相談用テキストにまとめます。</p>
+          </div>
+          <button id="copyHomePromptBtn" class="btn primary">相談用にコピー</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="page-profile" class="page">
+      <div class="grid two">
+        <section class="card">
+          <h2>家計の基本</h2>
+          <div class="form-grid">
+            <label>世帯年齢の目安<input id="age" type="number" min="18" max="100" /></label>
+            <label>月の手取り収入（万円）<input id="monthlyIncome" type="number" min="0" step="1" /></label>
+            <label>月の生活費（万円）<input id="monthlyExpenses" type="number" min="0" step="1" /></label>
+            <label>生活防衛資金（月数）<input id="emergencyMonths" type="number" min="0" max="36" step="1" /></label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>資産・負債</h2>
+          <div class="form-grid">
+            <label>現預金（万円）<input id="cash" type="number" min="0" step="1" /></label>
+            <label>投資資産（万円）<input id="investments" type="number" min="0" step="1" /></label>
+            <label>その他金融資産（万円）<input id="otherAssets" type="number" min="0" step="1" /></label>
+            <label>その他金融負債（万円）<input id="otherDebt" type="number" min="0" step="1" /></label>
+          </div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="section-head inline">
+          <div>
+            <h2>将来イベント</h2>
+            <p>教育費、車、リフォーム、旅行など。5年以内の予定は資金余力の計算に使います。</p>
+          </div>
+          <button id="addEventBtn" class="btn">イベント追加</button>
+        </div>
+        <div id="eventsList" class="events"></div>
+      </section>
+
+      <section class="card">
+        <h2>家計の方針メモ</h2>
+        <textarea id="policyMemo" rows="5" placeholder="例：現金は最低500万円残したい。教育費は安全資産で確保したい。"></textarea>
+      </section>
+    </section>
+
+    <section id="page-mortgage" class="page">
+      <section class="card">
+        <div class="section-head inline">
+          <div>
+            <h2>住宅ローン繰り上げ返済 vs 運用</h2>
+            <p>すべての変数は手動変更できます。変更すると即時再計算します。</p>
+          </div>
+          <button id="copyMortgagePromptBtn" class="btn primary">ChatGPT相談用にコピー</button>
+        </div>
+
+        <div class="form-grid cols-3">
+          <label>ローン残高（万円）<input id="mortgageBalance" type="number" min="0" step="1" /></label>
+          <label>現在金利（%）<input id="mortgageRate" type="number" min="0" max="20" step="0.01" /></label>
+          <label>残期間（年）<input id="mortgageYears" type="number" min="1" max="50" step="1" /></label>
+          <label>比較する金額（万円）<input id="compareAmount" type="number" min="0" step="1" /></label>
+          <label>運用想定年率（%）<input id="investReturn" type="number" min="-20" max="30" step="0.1" /></label>
+          <label>運用期間（年）<input id="investYears" type="number" min="1" max="60" step="1" /></label>
+        </div>
+      </section>
+
+      <div class="grid three">
+        <div class="result-card">
+          <div class="label">繰り上げ返済による概算利息削減</div>
+          <div id="interestSaved" class="result-value">—</div>
+          <div class="sub">返済額軽減ではなく期間短縮型の概算</div>
+        </div>
+        <div class="result-card">
+          <div class="label">投資した場合の将来価値</div>
+          <div id="investmentFuture" class="result-value">—</div>
+          <div id="investmentGain" class="sub">—</div>
+        </div>
+        <div class="result-card">
+          <div class="label">損益分岐年率</div>
+          <div id="breakEvenRate" class="result-value">—</div>
+          <div class="sub">繰り上げ返済の経済効果に並ぶ目安</div>
+        </div>
+      </div>
+
+      <section class="card">
+        <h2>比較結果</h2>
+        <div id="mortgageVerdict" class="verdict"></div>
+        <div class="chart-wrap"><canvas id="mortgageChart" width="1000" height="360"></canvas></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head inline">
+          <div>
+            <h2>比較ケースを保存</h2>
+            <p>条件を変えたケースを履歴に残して、あとで比較できます。</p>
+          </div>
+          <button id="saveMortgageCaseBtn" class="btn">このケースを保存</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="page-allocation" class="page">
+      <section class="card">
+        <div class="section-head inline">
+          <div>
+            <h2>今後の資産の持ち方</h2>
+            <p>生活防衛資金と近い将来の支出を確保した上で、運用可能額を見ます。</p>
+          </div>
+          <button id="copyAllocationPromptBtn" class="btn primary">ChatGPT相談用にコピー</button>
+        </div>
+
+        <div class="form-grid cols-3">
+          <label>想定運用年率（%）<input id="allocationReturn" type="number" min="-20" max="30" step="0.1" /></label>
+          <label>現金で確保する将来イベント年数<input id="reserveYears" type="number" min="0" max="15" step="1" /></label>
+          <label>追加で残したい現金（万円）<input id="extraCashReserve" type="number" min="0" step="1" /></label>
+        </div>
+      </section>
+
+      <div class="grid three">
+        <div class="result-card">
+          <div class="label">生活防衛資金</div>
+          <div id="emergencyFund" class="result-value">—</div>
+        </div>
+        <div class="result-card">
+          <div class="label">近い将来に使う予定</div>
+          <div id="nearTermNeeds" class="result-value">—</div>
+        </div>
+        <div class="result-card">
+          <div class="label">現金から運用へ回せる余力</div>
+          <div id="investableSurplus" class="result-value">—</div>
+        </div>
+      </div>
+
+      <section class="card">
+        <h2>資産配分の見え方</h2>
+        <div id="allocationAdvice" class="verdict"></div>
+        <div id="allocationBars" class="bars"></div>
+      </section>
+
+      <section class="card">
+        <h2>10年の概算推移</h2>
+        <div class="chart-wrap"><canvas id="allocationChart" width="1000" height="360"></canvas></div>
+        <p class="footnote">※単純化した試算です。税金・インフレ・価格変動・収入変化などは含みません。</p>
+      </section>
+    </section>
+
+    <section id="page-history" class="page">
+      <section class="card">
+        <div class="section-head inline">
+          <div>
+            <h2>保存したシミュレーション</h2>
+            <p>端末内に保存されています。</p>
+          </div>
+          <button id="clearHistoryBtn" class="btn danger">履歴を削除</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head inline">
+          <div>
+            <h2>復元</h2>
+            <p>JSONバックアップからこの端末にデータを戻します。</p>
+          </div>
+          <label class="btn file-btn">JSONを読み込む<input id="restoreFile" type="file" accept="application/json" hidden /></label>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="importDialog">
+    <form method="dialog" class="dialog-card" id="importForm">
+      <div class="section-head inline">
+        <div>
+          <h2>ChatGPTから貼り付け</h2>
+          <p>どのシミュレーター用データでも、ここが共通の貼り付け先です。</p>
+        </div>
+        <button value="cancel" class="icon-btn" aria-label="閉じる">×</button>
+      </div>
+      <textarea id="importText" rows="14" placeholder='例：{"type":"mortgage_vs_investment","inputs":{"mortgage_balance":3200,"mortgage_rate":0.85}}'></textarea>
+      <div id="importMessage" class="notice"></div>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn">キャンセル</button>
+        <button id="importApplyBtn" type="button" class="btn primary">読み込む</button>
+      </div>
+    </form>
+  </dialog>
+
+  <footer>
+    <div>データはこのブラウザの端末内に保存されます。</div>
+    <div>重要な判断は、金融機関・税理士・FP等の専門家にも確認してください。</div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

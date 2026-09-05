@@ -1,0 +1,9 @@
+{
+  "name": "家計シミュレーター",
+  "short_name": "家計Sim",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f8fb",
+  "theme_color": "#0f172a",
+  "icons": []
+}
