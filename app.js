@@ -4,7 +4,6 @@
   const STORAGE_KEY = 'familyFinanceSimulator.v1';
   const DEFAULT_STATE = {
     profile: {
-      age: 40,
       monthlyIncome: 60,
       monthlyExpenses: 40,
       emergencyMonths: 6,
@@ -14,9 +13,14 @@
       otherDebt: 0,
       policyMemo: '現金は生活防衛資金と近い将来の支出を優先して確保する。'
     },
+    members: [
+      { id: 'father', role: '父', age: null, attribute: '', annualGrossIncome: 0, annualNetIncome: 0, retirementAge: null },
+      { id: 'mother', role: '母', age: null, attribute: '', annualGrossIncome: 0, annualNetIncome: 0, retirementAge: null },
+      { id: 'son', role: '息子', age: null, attribute: '', annualGrossIncome: 0, annualNetIncome: 0, retirementAge: null }
+    ],
     events: [
-      { id: uid(), name: '教育費', yearsFromNow: 3, amount: 300 },
-      { id: uid(), name: '車の買い替え', yearsFromNow: 5, amount: 250 }
+      { id: uid(), category: 'education', name: '教育費', yearsFromNow: 3, amount: 300, frequency: 'once', durationYears: 1, flow: 'expense' },
+      { id: uid(), category: 'vehicle', name: '車の買い替え', yearsFromNow: 5, amount: 250, frequency: 'once', durationYears: 1, flow: 'expense' }
     ],
     mortgage: {
       balance: 3200,
@@ -95,7 +99,7 @@
     document.querySelector(`.tab[data-page="${page}"]`)?.click();
   }
 
-  const profileFields = ['age','monthlyIncome','monthlyExpenses','emergencyMonths','cash','investments','otherAssets','otherDebt','policyMemo'];
+  const profileFields = ['monthlyExpenses','emergencyMonths','cash','investments','otherAssets','otherDebt','policyMemo'];
   const mortgageFields = {
     mortgageBalance:'balance', mortgageRate:'rate', mortgageYears:'years', compareAmount:'compareAmount', investReturn:'investReturn', investYears:'investYears'
   };
@@ -103,10 +107,67 @@
     allocationReturn:'investReturn', reserveYears:'reserveYears', extraCashReserve:'extraCashReserve'
   };
 
+  const EVENT_CATEGORIES = [
+    ['education','教育'],['care','親の介護'],['medical','医療'],['housing','住宅修繕・リフォーム'],
+    ['vehicle','車'],['support','仕送り・家族支援'],['travel','旅行'],['retirement','退職関連'],['other','その他']
+  ];
+  const EVENT_FREQUENCIES = [['once','一時'],['yearly','毎年'],['monthly','毎月']];
+
+  function householdAnnualNet() {
+    return (state.members || []).reduce((sum, m) => sum + num(m.annualNetIncome), 0);
+  }
+
+  function householdMonthlyNet() {
+    return householdAnnualNet() / 12;
+  }
+
+  function syncLegacyMonthlyIncome() {
+    state.profile.monthlyIncome = householdMonthlyNet();
+  }
+
+  function renderMembers() {
+    const root = $('membersGrid');
+    if (!root) return;
+    root.innerHTML = '';
+    (state.members || []).forEach(member => {
+      const card = document.createElement('div');
+      card.className = 'member-card';
+      card.innerHTML = `
+        <h3>${escapeHtml(member.role)}</h3>
+        <div class="member-fields">
+          <label>年齢<input data-field="age" type="number" min="0" max="120" step="1" value="${member.age ?? ''}"></label>
+          <label class="attribute">属性・職業<input data-field="attribute" type="text" value="${escapeHtml(member.attribute || '')}" placeholder="例：会社員、中学生"></label>
+          <label>年収（税込・万円/年）<input data-field="annualGrossIncome" type="number" min="0" step="1" value="${num(member.annualGrossIncome)}"></label>
+          <label>手取り（万円/年）<input data-field="annualNetIncome" type="number" min="0" step="1" value="${num(member.annualNetIncome)}"></label>
+          <label>退職予定年齢（任意）<input data-field="retirementAge" type="number" min="0" max="100" step="1" value="${member.retirementAge ?? ''}" placeholder="未定"></label>
+        </div>`;
+      card.querySelectorAll('input').forEach(input => {
+        input.addEventListener('input', () => {
+          const field = input.dataset.field;
+          if (field === 'attribute') member[field] = input.value;
+          else if (field === 'retirementAge') member[field] = input.value === '' ? null : num(input.value);
+          else member[field] = num(input.value);
+          syncLegacyMonthlyIncome();
+          saveState();
+          renderMemberSummary();
+          renderHome(); renderMortgage(); renderAllocation();
+        });
+      });
+      root.appendChild(card);
+    });
+    renderMemberSummary();
+  }
+
+  function renderMemberSummary() {
+    if ($('householdAnnualNet')) $('householdAnnualNet').textContent = yen10k(householdAnnualNet());
+    if ($('householdMonthlyNet')) $('householdMonthlyNet').textContent = `${yen10k(householdMonthlyNet())} / 月`;
+  }
+
   function populateInputs() {
     profileFields.forEach(id => { if ($(id)) $(id).value = state.profile[id] ?? ''; });
     Object.entries(mortgageFields).forEach(([id,key]) => { $(id).value = state.mortgage[key]; });
     Object.entries(allocationFields).forEach(([id,key]) => { $(id).value = state.allocation[key]; });
+    renderMembers();
     renderEvents();
   }
 
@@ -132,6 +193,37 @@
     });
   }
 
+  function normalizeEvent(ev) {
+    if (!ev.category) ev.category = 'other';
+    if (!ev.flow) ev.flow = 'expense';
+    if (!ev.frequency) ev.frequency = 'once';
+    if (!Number.isFinite(Number(ev.durationYears))) ev.durationYears = 1;
+    return ev;
+  }
+
+  function eventAmountWithinYears(ev, horizonYears) {
+    normalizeEvent(ev);
+    if (ev.flow !== 'expense') return 0;
+    const start = Math.max(0, num(ev.yearsFromNow));
+    const horizon = Math.max(0, num(horizonYears));
+    if (start > horizon) return 0;
+    const amount = Math.max(0, num(ev.amount));
+    if (ev.frequency === 'once') return amount;
+    const duration = Math.max(1, Math.round(num(ev.durationYears, 1)));
+    const activeYears = Math.max(0, Math.min(duration, Math.floor(horizon - start) + 1));
+    if (ev.frequency === 'monthly') return amount * 12 * activeYears;
+    return amount * activeYears;
+  }
+
+  function eventTotalDisplay(ev) {
+    normalizeEvent(ev);
+    if (ev.frequency === 'once') return '一時費用';
+    const total = ev.frequency === 'monthly'
+      ? num(ev.amount) * 12 * Math.max(1, num(ev.durationYears, 1))
+      : num(ev.amount) * Math.max(1, num(ev.durationYears, 1));
+    return `総額目安 ${yen10k(total)}`;
+  }
+
   function renderEvents() {
     const root = $('eventsList');
     root.innerHTML = '';
@@ -139,19 +231,29 @@
       root.innerHTML = '<div class="sub">まだイベントはありません。</div>';
       return;
     }
+    state.events.forEach(normalizeEvent);
     state.events.sort((a,b) => num(a.yearsFromNow) - num(b.yearsFromNow)).forEach(ev => {
       const row = document.createElement('div');
       row.className = 'event-row';
+      const categoryOptions = EVENT_CATEGORIES.map(([v,l]) => `<option value="${v}" ${ev.category===v?'selected':''}>${l}</option>`).join('');
+      const freqOptions = EVENT_FREQUENCIES.map(([v,l]) => `<option value="${v}" ${ev.frequency===v?'selected':''}>${l}</option>`).join('');
       row.innerHTML = `
-        <label>予定<input data-field="name" type="text" value="${escapeHtml(ev.name)}"></label>
-        <label>何年後<input data-field="yearsFromNow" type="number" min="0" max="60" step="1" value="${num(ev.yearsFromNow)}"></label>
-        <label>金額（万円）<input data-field="amount" type="number" min="0" step="1" value="${num(ev.amount)}"></label>
+        <label>種類<select data-field="category">${categoryOptions}</select></label>
+        <label class="wide">予定・内容<input data-field="name" type="text" value="${escapeHtml(ev.name)}"></label>
+        <label>何年後<input data-field="yearsFromNow" type="number" min="0" max="80" step="1" value="${num(ev.yearsFromNow)}"></label>
+        <label>金額（万円）<input data-field="amount" type="number" min="0" step="1" value="${num(ev.amount)}"><span class="sub event-total">${escapeHtml(eventTotalDisplay(ev))}</span></label>
+        <label>費用頻度<select data-field="frequency">${freqOptions}</select></label>
+        <label>期間（年）<input data-field="durationYears" type="number" min="1" max="50" step="1" value="${Math.max(1,num(ev.durationYears,1))}" ${ev.frequency==='once'?'disabled':''}></label>
         <button type="button" class="btn danger">削除</button>`;
-      row.querySelectorAll('input').forEach(input => {
+      row.querySelectorAll('input,select').forEach(input => {
         input.addEventListener('input', () => {
           const field = input.dataset.field;
-          ev[field] = field === 'name' ? input.value : num(input.value);
-          saveState(); renderHome(); renderAllocation();
+          ev[field] = ['name','category','frequency','flow'].includes(field) ? input.value : num(input.value);
+          if (field === 'frequency' && ev.frequency === 'once') ev.durationYears = 1;
+          saveState();
+          renderHome(); renderAllocation();
+          if (field === 'frequency') renderEvents();
+          else if (field === 'amount' || field === 'durationYears') { const note=row.querySelector('.event-total'); if(note) note.textContent=eventTotalDisplay(ev); }
         });
       });
       row.querySelector('button').addEventListener('click', () => {
@@ -167,7 +269,7 @@
   }
 
   function addEvent() {
-    state.events.push({ id: uid(), name: '新しい予定', yearsFromNow: 1, amount: 0 });
+    state.events.push({ id: uid(), category: 'other', name: '新しい予定', yearsFromNow: 1, amount: 0, frequency: 'once', durationYears: 1, flow: 'expense' });
     saveState(); renderEvents(); renderHome(); renderAllocation();
   }
 
@@ -194,11 +296,11 @@
     ].map(([label,value,cls]) => barHtml(label, value, totalAssets, cls)).join('');
 
     const emergency = p.monthlyExpenses * p.emergencyMonths;
-    const fiveYear = state.events.filter(e => num(e.yearsFromNow) <= 5).reduce((s,e)=>s+num(e.amount),0);
+    const fiveYear = state.events.reduce((sum,e)=>sum+eventAmountWithinYears(e,5),0);
     const reserve = emergency + fiveYear;
     $('cashNeedSummary').innerHTML = `
       <div class="summary-item"><span>生活防衛資金</span><strong>${yen10k(emergency)}</strong></div>
-      <div class="summary-item"><span>5年以内の予定</span><strong>${yen10k(fiveYear)}</strong></div>
+      <div class="summary-item"><span>5年以内の支出予定</span><strong>${yen10k(fiveYear)}</strong></div>
       <div class="summary-item"><span>合計の現金需要目安</span><strong>${yen10k(reserve)}</strong></div>
       <div class="summary-item"><span>現在現金との差</span><strong>${yen10k(p.cash-reserve)}</strong></div>`;
   }
@@ -291,7 +393,7 @@
   function allocationResult() {
     const p = state.profile, a = state.allocation;
     const emergency = num(p.monthlyExpenses)*num(p.emergencyMonths);
-    const nearTerm = state.events.filter(e=>num(e.yearsFromNow)<=num(a.reserveYears)).reduce((s,e)=>s+num(e.amount),0);
+    const nearTerm = state.events.reduce((sum,e)=>sum+eventAmountWithinYears(e,num(a.reserveYears)),0);
     const required = emergency + nearTerm + num(a.extraCashReserve);
     const surplus = Math.max(0, num(p.cash)-required);
     const shortfall = Math.max(0, required-num(p.cash));
@@ -390,19 +492,21 @@
 
   function buildHomePrompt() {
     const p=state.profile,m=state.mortgage;
-    const events=state.events.map(e=>`・${e.name}：${e.yearsFromNow}年後 / ${yen10k(e.amount)}`).join('\n')||'・なし';
-    return `我が家の今後の資産形成について相談したいです。\n\n【現在の家計】\n年齢目安：${p.age}歳\n月手取り：${yen10k(p.monthlyIncome)}\n月生活費：${yen10k(p.monthlyExpenses)}\n現預金：${yen10k(p.cash)}\n投資資産：${yen10k(p.investments)}\nその他金融資産：${yen10k(p.otherAssets)}\nその他金融負債：${yen10k(p.otherDebt)}\n住宅ローン残高：${yen10k(m.balance)}\n住宅ローン金利：${pct(m.rate)}\n残期間：${m.years}年\n\n【今後の予定】\n${events}\n\n【方針・価値観】\n${p.policyMemo||'未入力'}\n\nこの家庭環境を踏まえて、現預金・安全資産・投資資産を今後どのような考え方で持つとよいか、短期・中期・長期に分けて助言してください。追加で確認すべき情報があれば指摘してください。`;
+    const members=(state.members||[]).map(x=>`・${x.role}：${x.age}歳 / ${x.attribute||'属性未入力'} / 年収 ${yen10k(x.annualGrossIncome)} / 手取り ${yen10k(x.annualNetIncome)}${x.retirementAge?` / 退職予定 ${x.retirementAge}歳`:''}`).join('\n');
+    const events=state.events.map(e=>`・${e.name}（${EVENT_CATEGORIES.find(x=>x[0]===e.category)?.[1]||'その他'}）：${e.yearsFromNow}年後 / ${e.frequency==='once'?'一時':e.frequency==='monthly'?'毎月':'毎年'} ${yen10k(e.amount)}${e.frequency==='once'?'':` × ${e.durationYears}年`}`).join('\n')||'・なし';
+    return `我が家の今後の資産形成について相談したいです。\n\n【家族】\n${members}\n\n【現在の家計】\n世帯月手取り：約${yen10k(householdMonthlyNet())}\n月生活費：${yen10k(p.monthlyExpenses)}\n現預金：${yen10k(p.cash)}\n投資資産：${yen10k(p.investments)}\nその他金融資産：${yen10k(p.otherAssets)}\nその他金融負債：${yen10k(p.otherDebt)}\n住宅ローン残高：${yen10k(m.balance)}\n住宅ローン金利：${pct(m.rate)}\n残期間：${m.years}年\n\n【今後の予定】\n${events}\n\n【方針・価値観】\n${p.policyMemo||'未入力'}\n\nこの家庭環境を踏まえて、現預金・安全資産・投資資産を今後どのような考え方で持つとよいか、短期・中期・長期に分けて助言してください。追加で確認すべき情報があれば指摘してください。`;
   }
 
   function buildMortgagePrompt() {
     const r=mortgageResult(),p=state.profile,m=state.mortgage;
-    return `住宅ローンの繰り上げ返済と運用を比較したいです。\n\n【家計】\n現預金：${yen10k(p.cash)}\n投資資産：${yen10k(p.investments)}\n月生活費：${yen10k(p.monthlyExpenses)}\n生活防衛資金設定：${p.emergencyMonths}か月\n\n【ローン・比較条件】\nローン残高：${yen10k(m.balance)}\n金利：${pct(m.rate)}\n残期間：${m.years}年\n比較する金額：${yen10k(m.compareAmount)}\n運用想定年率：${pct(m.investReturn)}\n運用期間：${m.investYears}年\n\n【アプリの概算結果】\n繰り上げ返済による利息削減：約${yen10k(r.interestSaved)}\n投資した場合の将来価値：約${yen10k(r.investFuture)}\n投資による増加分：約${yen10k(r.investmentGain)}\n損益分岐年率の単純目安：約${pct(r.breakEven)}\n繰り上げ返済後の現金：約${yen10k(p.cash-r.amount)}\n\n期待値だけでなく、流動性、住宅ローン金利上昇、投資リスク、今後の支出、住宅ローン控除や税務上の確認事項も含めて、どちらを優先する考え方が妥当か整理してください。現在の最新金利や制度が判断に影響する場合は確認してください。`;
+    const members=(state.members||[]).map(x=>`${x.role}${x.age==null?'（年齢未入力）':x.age+'歳'}（${x.attribute||'属性未入力'}）`).join('、');
+    return `住宅ローンの繰り上げ返済と運用を比較したいです。\n\n【家族】\n${members}\n世帯月手取り：約${yen10k(householdMonthlyNet())}\n\n【家計】\n現預金：${yen10k(p.cash)}\n投資資産：${yen10k(p.investments)}\n月生活費：${yen10k(p.monthlyExpenses)}\n生活防衛資金設定：${p.emergencyMonths}か月\n\n【ローン・比較条件】\nローン残高：${yen10k(m.balance)}\n金利：${pct(m.rate)}\n残期間：${m.years}年\n比較する金額：${yen10k(m.compareAmount)}\n運用想定年率：${pct(m.investReturn)}\n運用期間：${m.investYears}年\n\n【アプリの概算結果】\n繰り上げ返済による利息削減：約${yen10k(r.interestSaved)}\n投資した場合の将来価値：約${yen10k(r.investFuture)}\n投資による増加分：約${yen10k(r.investmentGain)}\n損益分岐年率の単純目安：約${pct(r.breakEven)}\n繰り上げ返済後の現金：約${yen10k(p.cash-r.amount)}\n\n期待値だけでなく、流動性、住宅ローン金利上昇、投資リスク、今後の支出、住宅ローン控除や税務上の確認事項も含めて、どちらを優先する考え方が妥当か整理してください。現在の最新金利や制度が判断に影響する場合は確認してください。`;
   }
 
   function buildAllocationPrompt() {
     const p=state.profile,a=state.allocation,r=allocationResult();
-    const events=state.events.map(e=>`・${e.name}：${e.yearsFromNow}年後 / ${yen10k(e.amount)}`).join('\n')||'・なし';
-    return `我が家の資産の持ち方について相談したいです。\n\n【現在】\n現預金：${yen10k(p.cash)}\n投資資産：${yen10k(p.investments)}\n月手取り：${yen10k(p.monthlyIncome)}\n月生活費：${yen10k(p.monthlyExpenses)}\n\n【将来予定】\n${events}\n\n【アプリ設定】\n生活防衛資金：${p.emergencyMonths}か月\n${a.reserveYears}年以内の予定資金を現金確保\n追加現金バッファ：${yen10k(a.extraCashReserve)}\n想定運用年率：${pct(a.investReturn)}\n\n【アプリ試算】\n生活防衛資金：約${yen10k(r.emergency)}\n近い将来の予定：約${yen10k(r.nearTerm)}\n必要現金合計：約${yen10k(r.required)}\n現金から運用へ回せる試算上の余力：約${yen10k(r.surplus)}\n\nこれは機械的な試算なので、この家庭環境では実際にどの程度を現金・安全資産・リスク資産として持つのが合理的か、複数シナリオで助言してください。`;
+    const events=state.events.map(e=>`・${e.name}：${e.yearsFromNow}年後 / ${e.frequency==='once'?'一時':e.frequency==='monthly'?'毎月':'毎年'} ${yen10k(e.amount)}${e.frequency==='once'?'':` × ${e.durationYears}年`}`).join('\n')||'・なし';
+    return `我が家の資産の持ち方について相談したいです。\n\n【現在】\n現預金：${yen10k(p.cash)}\n投資資産：${yen10k(p.investments)}\n世帯月手取り：約${yen10k(householdMonthlyNet())}\n月生活費：${yen10k(p.monthlyExpenses)}\n\n【将来予定】\n${events}\n\n【アプリ設定】\n生活防衛資金：${p.emergencyMonths}か月\n${a.reserveYears}年以内の予定資金を現金確保\n追加現金バッファ：${yen10k(a.extraCashReserve)}\n想定運用年率：${pct(a.investReturn)}\n\n【アプリ試算】\n生活防衛資金：約${yen10k(r.emergency)}\n近い将来の予定：約${yen10k(r.nearTerm)}\n必要現金合計：約${yen10k(r.required)}\n現金から運用へ回せる試算上の余力：約${yen10k(r.surplus)}\n\nこれは機械的な試算なので、この家庭環境では実際にどの程度を現金・安全資産・リスク資産として持つのが合理的か、複数シナリオで助言してください。`;
   }
 
   async function copyText(text, success='コピーしました。') {
@@ -468,7 +572,9 @@
         Object.entries(norm.data).forEach(([k,v])=>{if(v!==undefined)state.allocation[k]=v;});
         saveState();populateInputs();renderAll();$('importDialog').close();showPage('allocation');notify('資産配分データを読み込みました。');
       }else{
-        ['age','monthlyIncome','monthlyExpenses','emergencyMonths','cash','investments','otherAssets','otherDebt','policyMemo'].forEach(k=>{if(norm.data[k]!==undefined)state.profile[k]=norm.data[k];});
+        ['monthlyExpenses','emergencyMonths','cash','investments','otherAssets','otherDebt','policyMemo'].forEach(k=>{if(norm.data[k]!==undefined)state.profile[k]=norm.data[k];});
+        if(Array.isArray(norm.data.members) && norm.data.members.length===3) state.members=norm.data.members.map((m,i)=>({...state.members[i],...m,id:state.members[i].id,role:state.members[i].role}));
+        syncLegacyMonthlyIncome();
         saveState();populateInputs();renderAll();$('importDialog').close();showPage('profile');notify('家計データを読み込みました。');
       }
     }catch{msg.textContent='JSONを読み取れませんでした。ChatGPTに「アプリ用JSONで出して」と依頼して、JSON部分をそのまま貼ってください。';}
@@ -495,6 +601,9 @@
   function renderAll(){renderHome();renderMortgage();renderAllocation();renderHistory();}
 
   function init(){
+    if(!Array.isArray(state.members) || state.members.length!==3) state.members=structuredCloneSafe(DEFAULT_STATE.members);
+    state.events=(state.events||[]).map(normalizeEvent);
+    syncLegacyMonthlyIncome(); saveState();
     bindTabs();populateInputs();bindInputs();bindActions();renderAll();
     if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')) navigator.serviceWorker.register('./sw.js').catch(()=>{});
   }

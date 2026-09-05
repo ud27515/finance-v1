@@ -83,12 +83,24 @@
     </section>
 
     <section id="page-profile" class="page">
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>世帯情報</h2>
+            <p>父・母・息子の3名固定です。属性や収入はいつでも手動変更できます。</p>
+          </div>
+        </div>
+        <div id="membersGrid" class="members-grid"></div>
+        <div class="household-summary">
+          <span>世帯の年間手取り合計</span><strong id="householdAnnualNet">—</strong>
+          <span>月額換算</span><strong id="householdMonthlyNet">—</strong>
+        </div>
+      </section>
+
       <div class="grid two">
         <section class="card">
           <h2>家計の基本</h2>
           <div class="form-grid">
-            <label>世帯年齢の目安<input id="age" type="number" min="18" max="100" /></label>
-            <label>月の手取り収入（万円）<input id="monthlyIncome" type="number" min="0" step="1" /></label>
             <label>月の生活費（万円）<input id="monthlyExpenses" type="number" min="0" step="1" /></label>
             <label>生活防衛資金（月数）<input id="emergencyMonths" type="number" min="0" max="36" step="1" /></label>
           </div>
@@ -109,7 +121,7 @@
         <div class="section-head inline">
           <div>
             <h2>将来イベント</h2>
-            <p>教育費、車、リフォーム、旅行など。5年以内の予定は資金余力の計算に使います。</p>
+            <p>教育費、親の介護、医療、住宅修繕、車など。継続費用も設定でき、資金余力の計算に使います。</p>
           </div>
           <button id="addEventBtn" class="btn">イベント追加</button>
         </div>
