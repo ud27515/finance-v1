@@ -533,23 +533,127 @@
     }catch{notify('JSONバックアップを読み込めませんでした。',true);}
   }
 
+  function importedMoneyToManYen(value, key='') {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return undefined;
+    // GPT連携JSONでは *_income / *_balance / amount 等を円で受け取ることがある。
+    // アプリ内部は万円単位なので、100,000以上は円とみなして万円へ換算する。
+    // 例: 10,000,000円 -> 1,000万円。既に 1000 と渡された場合はそのまま。
+    return Math.abs(n) >= 100000 ? n / 10000 : n;
+  }
+
+  function normalizeImportedMember(member) {
+    if (!member || typeof member !== 'object') return null;
+    const out = {};
+    if (member.age !== undefined) out.age = member.age === null ? null : num(member.age);
+    if (member.attribute !== undefined) out.attribute = String(member.attribute ?? '');
+    if (member.occupation !== undefined && member.attribute === undefined) out.attribute = String(member.occupation ?? '');
+    if (member.school_grade !== undefined && member.attribute === undefined && member.occupation === undefined) out.attribute = String(member.school_grade ?? '');
+    if (member.annual_gross_income !== undefined) out.annualGrossIncome = importedMoneyToManYen(member.annual_gross_income, 'annual_gross_income');
+    if (member.annualGrossIncome !== undefined) out.annualGrossIncome = importedMoneyToManYen(member.annualGrossIncome, 'annualGrossIncome');
+    if (member.annual_net_income !== undefined) out.annualNetIncome = importedMoneyToManYen(member.annual_net_income, 'annual_net_income');
+    if (member.annualNetIncome !== undefined) out.annualNetIncome = importedMoneyToManYen(member.annualNetIncome, 'annualNetIncome');
+    if (member.retirement_age !== undefined) out.retirementAge = member.retirement_age === null ? null : num(member.retirement_age);
+    if (member.retirementAge !== undefined) out.retirementAge = member.retirementAge === null ? null : num(member.retirementAge);
+    return out;
+  }
+
+  function normalizeImportedEvent(ev) {
+    if (!ev || typeof ev !== 'object') return null;
+    const catMap = {
+      parent_care:'care', care:'care', education:'education', medical:'medical', housing:'housing',
+      vehicle:'vehicle', car:'vehicle', support:'support', travel:'travel', retirement:'retirement', other:'other'
+    };
+    const freqMap = {once:'once', one_time:'once', yearly:'yearly', annual:'yearly', monthly:'monthly'};
+    const category = catMap[ev.category] || 'other';
+    const frequency = freqMap[ev.frequency] || 'once';
+    const amount = importedMoneyToManYen(ev.amount, 'event_amount');
+    return normalizeEvent({
+      id: uid(),
+      category,
+      name: String(ev.title ?? ev.name ?? (EVENT_CATEGORIES.find(x=>x[0]===category)?.[1] || 'その他')),
+      yearsFromNow: num(ev.start_after_years ?? ev.years_from_now ?? ev.yearsFromNow, 0),
+      amount: amount ?? 0,
+      frequency,
+      durationYears: Math.max(1, Math.round(num(ev.duration_years ?? ev.durationYears, 1))),
+      flow: ev.flow === 'income' ? 'income' : 'expense'
+    });
+  }
+
+  function applyAppUpdate(obj) {
+    let changed = 0;
+    const household = obj.household || {};
+    const byId = { father:0, mother:1, son:2 };
+    Object.entries(byId).forEach(([key, idx]) => {
+      const upd = normalizeImportedMember(household[key]);
+      if (!upd) return;
+      Object.entries(upd).forEach(([field, value]) => {
+        if (value !== undefined) { state.members[idx][field] = value; changed++; }
+      });
+    });
+
+    const profile = obj.profile || obj.assets || {};
+    const profileMap = {
+      monthly_expenses:'monthlyExpenses', monthlyExpenses:'monthlyExpenses',
+      emergency_months:'emergencyMonths', emergencyMonths:'emergencyMonths',
+      cash:'cash', investments:'investments', other_assets:'otherAssets', otherAssets:'otherAssets',
+      other_debt:'otherDebt', otherDebt:'otherDebt', policy_memo:'policyMemo', policyMemo:'policyMemo'
+    };
+    Object.entries(profileMap).forEach(([srcKey, dstKey]) => {
+      if (profile[srcKey] === undefined) return;
+      if (dstKey === 'policyMemo') state.profile[dstKey] = String(profile[srcKey] ?? '');
+      else if (['cash','investments','otherAssets','otherDebt','monthlyExpenses'].includes(dstKey)) state.profile[dstKey] = importedMoneyToManYen(profile[srcKey], srcKey) ?? state.profile[dstKey];
+      else state.profile[dstKey] = num(profile[srcKey]);
+      changed++;
+    });
+
+    const mortgage = obj.mortgage || {};
+    const mortgageMap = [
+      ['mortgage_balance','balance',true],['balance','balance',true],
+      ['mortgage_rate','rate',false],['rate','rate',false],
+      ['remaining_years','years',false],['years','years',false],
+      ['comparison_amount','compareAmount',true],['compare_amount','compareAmount',true],['compareAmount','compareAmount',true],
+      ['investment_return','investReturn',false],['investReturn','investReturn',false],
+      ['investment_years','investYears',false],['investYears','investYears',false]
+    ];
+    mortgageMap.forEach(([srcKey,dstKey,isMoney])=>{
+      if(mortgage[srcKey]===undefined) return;
+      state.mortgage[dstKey] = isMoney ? (importedMoneyToManYen(mortgage[srcKey],srcKey) ?? state.mortgage[dstKey]) : num(mortgage[srcKey]);
+      changed++;
+    });
+
+    if (Array.isArray(obj.events)) {
+      obj.events.forEach(raw => {
+        const ev = normalizeImportedEvent(raw);
+        if (ev) { state.events.push(ev); changed++; }
+      });
+    }
+    syncLegacyMonthlyIncome();
+    return changed;
+  }
+
   function normalizeImported(obj){
+    // app_update は家計プロフィールの差分更新用。未指定項目は上書きしない。
+    if (obj && obj.type === 'app_update') return {type:'app_update',data:obj};
+
     const src=obj.inputs??obj;
     const type=obj.type??obj.simulation??'';
     const get=(...keys)=>{for(const k of keys){if(src[k]!==undefined)return num(src[k]);}return undefined;};
+    const getMoney=(...keys)=>{for(const k of keys){if(src[k]!==undefined)return importedMoneyToManYen(src[k], k);}return undefined;};
     if(type.includes('mortgage') || src.mortgage_balance!==undefined || src.mortgageBalance!==undefined){
       return {type:'mortgage',data:{
-        balance:get('mortgage_balance','mortgageBalance','balance'),
+        balance:getMoney('mortgage_balance','mortgageBalance','balance'),
         rate:get('mortgage_rate','mortgageRate','rate'),
         years:get('remaining_years','remainingYears','mortgageYears','years'),
-        compareAmount:get('comparison_amount','compareAmount','available_cash','amount'),
+        compareAmount:getMoney('comparison_amount','compareAmount','available_cash','amount'),
         investReturn:get('investment_return','investReturn','expected_return'),
         investYears:get('investment_years','investYears')
       }};
     }
     if(type.includes('allocation') || type.includes('asset')){
       return {type:'allocation',data:{
-        investReturn:get('investment_return','investReturn'),reserveYears:get('reserve_years','reserveYears'),extraCashReserve:get('extra_cash_reserve','extraCashReserve')
+        investReturn:get('investment_return','investReturn'),reserveYears:get('reserve_years','reserveYears'),extraCashReserve:getMoney('extra_cash_reserve','extraCashReserve')
       }};
     }
     if(type.includes('profile') || src.cash!==undefined || src.investments!==undefined){
@@ -565,19 +669,31 @@
       let cleaned=text.replace(/^```(?:json)?\s*/i,'').replace(/```$/,'').trim();
       const first=cleaned.indexOf('{'),last=cleaned.lastIndexOf('}');if(first>=0&&last>first)cleaned=cleaned.slice(first,last+1);
       const obj=JSON.parse(cleaned);const norm=normalizeImported(obj);if(!norm)throw new Error('unknown');
-      if(norm.type==='mortgage'){
+      if(norm.type==='app_update'){
+        const changed=applyAppUpdate(norm.data);
+        if(!changed) throw new Error('empty update');
+        saveState();populateInputs();renderAll();$('importDialog').close();showPage('profile');notify(`家計情報を${changed}項目反映しました。`);
+      }else if(norm.type==='mortgage'){
         Object.entries(norm.data).forEach(([k,v])=>{if(v!==undefined)state.mortgage[k]=v;});
         saveState();populateInputs();renderAll();$('importDialog').close();showPage('mortgage');notify('住宅ローン比較データを読み込みました。');
       }else if(norm.type==='allocation'){
         Object.entries(norm.data).forEach(([k,v])=>{if(v!==undefined)state.allocation[k]=v;});
         saveState();populateInputs();renderAll();$('importDialog').close();showPage('allocation');notify('資産配分データを読み込みました。');
       }else{
-        ['monthlyExpenses','emergencyMonths','cash','investments','otherAssets','otherDebt','policyMemo'].forEach(k=>{if(norm.data[k]!==undefined)state.profile[k]=norm.data[k];});
+        ['monthlyExpenses','emergencyMonths','cash','investments','otherAssets','otherDebt','policyMemo'].forEach(k=>{
+          if(norm.data[k]===undefined) return;
+          if(k==='policyMemo') state.profile[k]=String(norm.data[k]??'');
+          else if(['cash','investments','otherAssets','otherDebt','monthlyExpenses'].includes(k)) state.profile[k]=importedMoneyToManYen(norm.data[k],k) ?? state.profile[k];
+          else state.profile[k]=num(norm.data[k]);
+        });
         if(Array.isArray(norm.data.members) && norm.data.members.length===3) state.members=norm.data.members.map((m,i)=>({...state.members[i],...m,id:state.members[i].id,role:state.members[i].role}));
         syncLegacyMonthlyIncome();
         saveState();populateInputs();renderAll();$('importDialog').close();showPage('profile');notify('家計データを読み込みました。');
       }
-    }catch{msg.textContent='JSONを読み取れませんでした。ChatGPTに「アプリ用JSONで出して」と依頼して、JSON部分をそのまま貼ってください。';}
+    }catch(err){
+      console.warn('Import failed',err);
+      msg.textContent='JSONを読み取れませんでした。type: "app_update" またはシミュレーター用JSONをそのまま貼ってください。';
+    }
   }
 
   function clearHistory(){

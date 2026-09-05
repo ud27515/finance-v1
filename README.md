@@ -39,3 +39,10 @@ GitHub Pagesで公開できる、完全静的な家計シミュレーターで�
 
 ## 注意
 本アプリの計算は意思決定支援用の簡易シミュレーションです。税務・住宅ローン控除・金融商品の詳細条件などは個別確認してください。
+
+
+## ChatGPT連携 JSON
+`type: "app_update"` に対応しています。
+`household.father / mother / son` の `age`, `attribute`, `annual_gross_income`, `annual_net_income`, `retirement_age` を差分更新できます。
+金額は円（例: 10000000）でも万円（例: 1000）でも取り込めます。未指定項目は上書きしません。
+`events` から教育、親の介護、医療、住宅、車、家族支援、旅行、退職等のイベント追加にも対応します。
